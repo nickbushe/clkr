@@ -153,6 +153,21 @@
 
   function createLogger(runtimeConfig) {
     return {
+      info: function () {
+        if (typeof console !== "undefined" && typeof console.info === "function") {
+          console.info.apply(console, arguments);
+        }
+      },
+      warn: function () {
+        if (typeof console !== "undefined" && typeof console.warn === "function") {
+          console.warn.apply(console, arguments);
+        }
+      },
+      error: function () {
+        if (typeof console !== "undefined" && typeof console.error === "function") {
+          console.error.apply(console, arguments);
+        }
+      },
       debug: function () {
         if (runtimeConfig.debug && typeof console !== "undefined") {
           console.log.apply(console, arguments);
@@ -502,7 +517,15 @@
     var logger = createLogger(runtimeConfig);
     var cachedSuccess = readSuccessCache(runtimeConfig.instanceId);
 
+    logger.info("[NetClkr] bootstrap:start", {
+      instanceId: runtimeConfig.instanceId,
+      configUrl: runtimeConfig.configUrl
+    });
+
     if (cachedSuccess) {
+      logger.info("[NetClkr] bootstrap:cache-hit", {
+        instanceId: runtimeConfig.instanceId
+      });
       executeModuleSource(cachedSuccess.moduleSource, cachedSuccess.payload, logger, "cache");
       return;
     }
@@ -511,27 +534,52 @@
       .then(function (apiResponse) {
         var remoteConfig = normalizeApiConfig(apiResponse, runtimeConfig);
 
+        logger.info("[NetClkr] config:loaded", {
+          instanceId: runtimeConfig.instanceId,
+          status: remoteConfig.status,
+          rulesCount: remoteConfig.rules.length
+        });
+
         if (remoteConfig.status !== "on") {
-          logger.debug("NetClkrBootstrap: instance disabled or missing");
+          logger.warn("[NetClkr] bootstrap:stopped", {
+            reason: "instance_disabled_or_missing",
+            instanceId: runtimeConfig.instanceId
+          });
           return null;
         }
 
         if (!isAllowedSite(remoteConfig)) {
-          logger.debug("NetClkrBootstrap: site not allowed");
+          logger.warn("[NetClkr] bootstrap:stopped", {
+            reason: "site_not_allowed",
+            hostname: window.location.hostname
+          });
           return null;
         }
 
         return runPrechecks(runtimeConfig.instanceId, remoteConfig).then(function (precheckResult) {
-          logger.debug("NetClkrBootstrap: precheck", precheckResult.reason);
+          logger.info("[NetClkr] precheck:result", {
+            instanceId: runtimeConfig.instanceId,
+            passed: precheckResult.passed,
+            reason: precheckResult.reason,
+            geoData: precheckResult.geoData || null
+          });
 
           if (!precheckResult.passed) {
             return null;
           }
 
           if (!remoteConfig.moduleUrl) {
-            logger.debug("NetClkrBootstrap: moduleUrl missing");
+            logger.warn("[NetClkr] bootstrap:stopped", {
+              reason: "module_url_missing",
+              instanceId: runtimeConfig.instanceId
+            });
             return null;
           }
+
+          logger.info("[NetClkr] module:loading", {
+            moduleUrl: remoteConfig.moduleUrl,
+            instanceId: runtimeConfig.instanceId
+          });
 
           return loadModule(runtimeConfig.instanceId, resolveUrl(remoteConfig.moduleUrl, runtimeConfig.configUrl), {
             instanceId: runtimeConfig.instanceId,
@@ -542,7 +590,7 @@
         });
       })
       .catch(function (error) {
-        logger.debug(error.message || error);
+        logger.error("[NetClkr] bootstrap:error", error && error.message ? error.message : error);
       });
   }
 

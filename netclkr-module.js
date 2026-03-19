@@ -9,6 +9,12 @@
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
 
+  function logInfo(message, data) {
+    if (typeof console !== "undefined" && typeof console.info === "function") {
+      console.info(message, data || {});
+    }
+  }
+
   function toArray(value) {
     return Array.isArray(value) ? value : [];
   }
@@ -123,6 +129,14 @@
     var action = typeof rule.action === "string" ? rule.action : "redirect";
     var targetUrl = resolveTargetUrl(rule, link);
 
+    logInfo("[NetClkr] rule:matched", {
+      instanceId: payload.instanceId,
+      ruleId: rule.id || "",
+      action: action,
+      href: link.href,
+      targetUrl: targetUrl
+    });
+
     if (rule.preventDefault !== false) {
       event.preventDefault();
     }
@@ -160,10 +174,19 @@
     initialized: true,
     mount: function (payload) {
       if (!isObject(payload) || payload.interceptLinks === false) {
+        logInfo("[NetClkr] module:mount-skipped", {
+          reason: "invalid_payload_or_intercept_disabled"
+        });
         return;
       }
 
       var rules = toArray(payload.rules).filter(isObject);
+
+      logInfo("[NetClkr] module:mounted", {
+        instanceId: payload.instanceId,
+        rulesCount: rules.length,
+        interceptLinks: payload.interceptLinks !== false
+      });
 
       document.addEventListener(
         "click",
