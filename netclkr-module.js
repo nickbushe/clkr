@@ -20,6 +20,19 @@
   }
 
   function matchRule(link, rule) {
+    var linkMatch;
+    if (Array.isArray(rule.links) && rule.links.length) {
+      linkMatch = matchRuleLinks(link, rule);
+      if (!linkMatch.matched) {
+        return linkMatch;
+      }
+
+      return {
+        matched: true,
+        matchedLink: linkMatch.matchedLink
+      };
+    }
+
     var href = link.href || "";
     var text = (link.textContent || "").trim();
     var action = typeof rule.action === "string" ? rule.action : "redirect";
@@ -72,6 +85,37 @@
     return { matched: true };
   }
 
+  function matchRuleLinks(link, rule) {
+    var i;
+    var entry;
+    var entryRule;
+    var result;
+
+    for (i = 0; i < rule.links.length; i += 1) {
+      entry = rule.links[i];
+      if (!isObject(entry)) {
+        continue;
+      }
+
+      entryRule = {
+        action: rule.action,
+        selector: entry.type === "selector" ? entry.value : "",
+        urlPattern: entry.type === "urlPattern" ? entry.value : "",
+        textPattern: entry.type === "textPattern" ? entry.value : ""
+      };
+      result = matchRule(link, entryRule);
+
+      if (result.matched) {
+        return {
+          matched: true,
+          matchedLink: entry
+        };
+      }
+    }
+
+    return { matched: false, reason: "links_mismatch" };
+  }
+
   function matchesPattern(value, pattern) {
     if (!pattern) {
       return false;
@@ -104,6 +148,12 @@
       matchResult = matchRule(link, rules[i]);
 
       if (matchResult.matched) {
+        if (matchResult.matchedLink) {
+          rules[i].__matchedLink = matchResult.matchedLink;
+        } else {
+          delete rules[i].__matchedLink;
+        }
+
         return rules[i];
       }
 
@@ -120,6 +170,10 @@
   }
 
   function resolveTargetUrl(rule, link) {
+    if (isObject(rule.__matchedLink) && typeof rule.__matchedLink.redirectTo === "string" && rule.__matchedLink.redirectTo) {
+      return rule.__matchedLink.redirectTo;
+    }
+
     if (typeof rule.redirectTo === "string" && rule.redirectTo) {
       return rule.redirectTo;
     }
