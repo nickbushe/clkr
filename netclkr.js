@@ -56,6 +56,27 @@
     return Array.isArray(value) ? value : [];
   }
 
+  function normalizeStringList(value) {
+    if (Array.isArray(value)) {
+      return value
+        .map(function (item) {
+          return typeof item === "string" ? item.trim() : "";
+        })
+        .filter(Boolean);
+    }
+
+    if (typeof value === "string" && value.trim()) {
+      return value
+        .split(",")
+        .map(function (item) {
+          return item.trim();
+        })
+        .filter(Boolean);
+    }
+
+    return [];
+  }
+
   function safeJsonParse(value) {
     try {
       return JSON.parse(value);
@@ -345,11 +366,11 @@
       return { blocked: false, reason: "no_geo" };
     }
 
-    if (locationRule.country && geoData.country !== locationRule.country) {
+    if (locationRule.countries.length && locationRule.countries.indexOf(geoData.country) === -1) {
       return { blocked: true, reason: "country_mismatch" };
     }
 
-    if (locationRule.excludedCity && geoData.city === locationRule.excludedCity) {
+    if (locationRule.excludedCities.length && locationRule.excludedCities.indexOf(geoData.city) !== -1) {
       return { blocked: true, reason: "blocked_city" };
     }
 
@@ -402,8 +423,10 @@
           ? remoteConfig.geoApiUrl
           : "https://ipinfo.io/json",
       geo: {
-        country: typeof geo.country === "string" ? geo.country : "",
-        excludedCity: typeof geo.excludedCity === "string" ? geo.excludedCity : ""
+        countries: normalizeStringList(geo.countries && geo.countries.length ? geo.countries : geo.country),
+        excludedCities: normalizeStringList(
+          geo.excludedCities && geo.excludedCities.length ? geo.excludedCities : geo.excludedCity
+        )
       }
     };
   }
@@ -412,7 +435,7 @@
     var precheckConfig = normalizePrecheckConfig(remoteConfig);
     var compiledRanges = precheckConfig.ipRanges;
 
-    if (!compiledRanges.length && !precheckConfig.geo.country && !precheckConfig.geo.excludedCity) {
+    if (!compiledRanges.length && !precheckConfig.geo.countries.length && !precheckConfig.geo.excludedCities.length) {
       return Promise.resolve({ passed: true, reason: "none" });
     }
 
