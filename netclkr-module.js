@@ -19,6 +19,49 @@
     return Array.isArray(value) ? value : [];
   }
 
+  function normalizeUrlForMatch(value) {
+    if (typeof value !== "string") {
+      return "";
+    }
+
+    var trimmed = value.trim();
+    if (!trimmed) {
+      return "";
+    }
+
+    try {
+      return new URL(trimmed, window.location.href).toString();
+    } catch (error) {
+      return trimmed;
+    }
+  }
+
+  function matchesSourceUrl(link, sourceUrl) {
+    var normalizedSource = normalizeUrlForMatch(sourceUrl);
+    var normalizedHref = normalizeUrlForMatch(link.href || "");
+
+    if (!normalizedSource || !normalizedHref) {
+      return false;
+    }
+
+    if (normalizedHref === normalizedSource) {
+      return true;
+    }
+
+    try {
+      var source = new URL(normalizedSource, window.location.href);
+      var href = new URL(normalizedHref, window.location.href);
+
+      return (
+        href.pathname === source.pathname &&
+        href.search === source.search &&
+        href.hash === source.hash
+      );
+    } catch (error) {
+      return false;
+    }
+  }
+
   function matchesPattern(value, pattern) {
     if (!pattern) {
       return false;
@@ -42,6 +85,7 @@
   function matchesRule(link, rule) {
     var href = link.href || "";
     var text = (link.textContent || "").trim();
+    var action = typeof rule.action === "string" ? rule.action : "redirect";
     var selector = typeof rule.selector === "string" ? rule.selector : "";
     var urlPattern = typeof rule.urlPattern === "string" ? rule.urlPattern : "";
     var textPattern = typeof rule.textPattern === "string" ? rule.textPattern : "";
@@ -50,7 +94,11 @@
       return false;
     }
 
-    if (urlPattern && !matchesPattern(href, urlPattern)) {
+    if ((action === "redirect" || action === "replace") && urlPattern && !matchesSourceUrl(link, urlPattern)) {
+      return false;
+    }
+
+    if (action !== "redirect" && action !== "replace" && urlPattern && !matchesPattern(href, urlPattern)) {
       return false;
     }
 
