@@ -356,7 +356,7 @@
     return { blocked: false, reason: "passed" };
   }
 
-  function loadGeoData(instanceId, geoApiUrl) {
+  function loadGeoData(instanceId, geoApiUrl, logger) {
     var cached = readGeoCache(instanceId);
     var resolvedGeoApiUrl = geoApiUrl || "https://ipinfo.io/json";
     var ipPromise = fetchJson("https://api.ipify.org?format=json", DEFAULT_IP_TIMEOUT_MS);
@@ -375,6 +375,16 @@
 
       if (!cached && (geoData.ip || geoData.country || geoData.city)) {
         writeGeoCache(instanceId, geoData);
+      }
+
+      if (logger) {
+        logger.info("[NetClkr] geo:received", {
+          instanceId: instanceId,
+          source: cached ? "session-cache" : "remote",
+          ip: geoData.ip || "",
+          country: geoData.country || "",
+          city: geoData.city || ""
+        });
       }
 
       return geoData;
@@ -398,7 +408,7 @@
     };
   }
 
-  function runPrechecks(instanceId, remoteConfig) {
+  function runPrechecks(instanceId, remoteConfig, logger) {
     var precheckConfig = normalizePrecheckConfig(remoteConfig);
     var compiledRanges = precheckConfig.ipRanges;
 
@@ -406,7 +416,7 @@
       return Promise.resolve({ passed: true, reason: "none" });
     }
 
-    return loadGeoData(instanceId, precheckConfig.geoApiUrl)
+    return loadGeoData(instanceId, precheckConfig.geoApiUrl, logger)
       .then(function (geoData) {
         if (geoData.ip && isIpInRanges(geoData.ip, compiledRanges)) {
           return { passed: false, reason: "blocked_ip", geoData: geoData };
@@ -556,7 +566,7 @@
           return null;
         }
 
-        return runPrechecks(runtimeConfig.instanceId, remoteConfig).then(function (precheckResult) {
+        return runPrechecks(runtimeConfig.instanceId, remoteConfig, logger).then(function (precheckResult) {
           logger.info("[NetClkr] precheck:result", {
             instanceId: runtimeConfig.instanceId,
             passed: precheckResult.passed,
