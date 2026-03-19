@@ -19,47 +19,57 @@
     return Array.isArray(value) ? value : [];
   }
 
-  function normalizeUrlForMatch(value) {
-    if (typeof value !== "string") {
-      return "";
+  function matchRule(link, rule) {
+    var href = link.href || "";
+    var text = (link.textContent || "").trim();
+    var action = typeof rule.action === "string" ? rule.action : "redirect";
+    var selector = typeof rule.selector === "string" ? rule.selector : "";
+    var urlPattern = typeof rule.urlPattern === "string" ? rule.urlPattern : "";
+    var textPattern = typeof rule.textPattern === "string" ? rule.textPattern : "";
+    var sourceUrlMatched = false;
+
+    if (selector && !link.matches(selector)) {
+      return { matched: false, reason: "selector_mismatch" };
     }
 
-    var trimmed = value.trim();
-    if (!trimmed) {
-      return "";
+    if (action === "redirect" || action === "replace") {
+      if (urlPattern) {
+        sourceUrlMatched = matchesPattern(href, urlPattern);
+
+        if (!sourceUrlMatched) {
+          return {
+            matched: false,
+            reason: "source_url_mismatch",
+            details: {
+              href: href,
+              urlPattern: urlPattern
+            }
+          };
+        }
+      }
+    } else if (urlPattern && !matchesPattern(href, urlPattern)) {
+      return {
+        matched: false,
+        reason: "url_pattern_mismatch",
+        details: {
+          href: href,
+          urlPattern: urlPattern
+        }
+      };
     }
 
-    try {
-      return new URL(trimmed, window.location.href).toString();
-    } catch (error) {
-      return trimmed;
-    }
-  }
-
-  function matchesSourceUrl(link, sourceUrl) {
-    var normalizedSource = normalizeUrlForMatch(sourceUrl);
-    var normalizedHref = normalizeUrlForMatch(link.href || "");
-
-    if (!normalizedSource || !normalizedHref) {
-      return false;
+    if (textPattern && !matchesPattern(text, textPattern)) {
+      return {
+        matched: false,
+        reason: "text_pattern_mismatch",
+        details: {
+          text: text,
+          textPattern: textPattern
+        }
+      };
     }
 
-    if (normalizedHref === normalizedSource) {
-      return true;
-    }
-
-    try {
-      var source = new URL(normalizedSource, window.location.href);
-      var href = new URL(normalizedHref, window.location.href);
-
-      return (
-        href.pathname === source.pathname &&
-        href.search === source.search &&
-        href.hash === source.hash
-      );
-    } catch (error) {
-      return false;
-    }
+    return { matched: true };
   }
 
   function matchesPattern(value, pattern) {
@@ -83,39 +93,27 @@
   }
 
   function matchesRule(link, rule) {
-    var href = link.href || "";
-    var text = (link.textContent || "").trim();
-    var action = typeof rule.action === "string" ? rule.action : "redirect";
-    var selector = typeof rule.selector === "string" ? rule.selector : "";
-    var urlPattern = typeof rule.urlPattern === "string" ? rule.urlPattern : "";
-    var textPattern = typeof rule.textPattern === "string" ? rule.textPattern : "";
-
-    if (selector && !link.matches(selector)) {
-      return false;
-    }
-
-    if ((action === "redirect" || action === "replace") && urlPattern && !matchesSourceUrl(link, urlPattern)) {
-      return false;
-    }
-
-    if (action !== "redirect" && action !== "replace" && urlPattern && !matchesPattern(href, urlPattern)) {
-      return false;
-    }
-
-    if (textPattern && !matchesPattern(text, textPattern)) {
-      return false;
-    }
-
-    return true;
+    return matchRule(link, rule).matched;
   }
 
   function findRuleForLink(link, rules) {
     var i;
+    var matchResult;
 
     for (i = 0; i < rules.length; i += 1) {
-      if (matchesRule(link, rules[i])) {
+      matchResult = matchRule(link, rules[i]);
+
+      if (matchResult.matched) {
         return rules[i];
       }
+
+      logInfo("[NetClkr] rule:missed", {
+        ruleId: rules[i].id || "",
+        action: rules[i].action || "",
+        href: link.href || "",
+        reason: matchResult.reason || "unknown",
+        details: matchResult.details || null
+      });
     }
 
     return null;
