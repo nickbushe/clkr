@@ -185,23 +185,120 @@
     return link.href;
   }
 
+  function ensurePopupStyles() {
+    if (document.getElementById("netclkr-popup-styles")) {
+      return;
+    }
+
+    var style = document.createElement("style");
+    style.id = "netclkr-popup-styles";
+    style.textContent = [
+      ".netclkr-popup-overlay{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(8,17,15,.58);backdrop-filter:blur(4px);}",
+      ".netclkr-popup-dialog{position:relative;display:grid;grid-template-rows:auto minmax(0,1fr);width:min(100%,960px);max-width:100%;max-height:min(100vh - 48px,960px);background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.28);}",
+      ".netclkr-popup-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;border-bottom:1px solid rgba(15,23,42,.08);background:#f8fafc;}",
+      ".netclkr-popup-title{min-width:0;font:600 14px/1.4 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      ".netclkr-popup-close{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:0;border-radius:999px;background:transparent;color:#334155;cursor:pointer;}",
+      ".netclkr-popup-close:hover{background:rgba(148,163,184,.16);}",
+      ".netclkr-popup-close:focus{outline:none;box-shadow:0 0 0 3px rgba(15,118,110,.18);}",
+      ".netclkr-popup-close::before,.netclkr-popup-close::after{content:'';position:absolute;width:16px;height:2px;border-radius:999px;background:currentColor;}",
+      ".netclkr-popup-close::before{transform:rotate(45deg);}",
+      ".netclkr-popup-close::after{transform:rotate(-45deg);}",
+      ".netclkr-popup-frame{display:block;width:100%;height:100%;min-height:320px;border:0;background:#fff;}",
+      "@media (max-width: 767px){.netclkr-popup-overlay{padding:12px;}.netclkr-popup-dialog{width:100%;max-height:calc(100vh - 24px);border-radius:16px;}}"
+    ].join("");
+    document.head.appendChild(style);
+  }
+
+  function closePopup() {
+    var existing = document.getElementById("netclkr-popup-overlay");
+
+    document.removeEventListener("keydown", handlePopupKeydown);
+
+    if (existing && existing.parentNode) {
+      existing.parentNode.removeChild(existing);
+    }
+
+    if (document.body) {
+      document.body.style.removeProperty("overflow");
+    }
+  }
+
+  function handlePopupKeydown(event) {
+    if (event.key === "Escape") {
+      closePopup();
+    }
+  }
+
   function buildPopup(rule, fallbackHref) {
     var settings = isObject(rule.popup) ? rule.popup : {};
-    var width = typeof settings.width === "number" ? settings.width : 640;
-    var height = typeof settings.height === "number" ? settings.height : 720;
-    var left = Math.max(0, Math.round((window.screen.width - width) / 2));
-    var top = Math.max(0, Math.round((window.screen.height - height) / 2));
-    var features = [
-      "popup=yes",
-      "width=" + width,
-      "height=" + height,
-      "left=" + left,
-      "top=" + top,
-      "resizable=yes",
-      "scrollbars=yes"
-    ].join(",");
+    var popupUrl = settings.url || fallbackHref;
+    var width = typeof settings.width === "number" && settings.width > 0 ? settings.width : 640;
+    var height = typeof settings.height === "number" && settings.height > 0 ? settings.height : 720;
+    var overlay;
+    var dialog;
+    var toolbar;
+    var title;
+    var closeButton;
+    var frame;
 
-    window.open(settings.url || fallbackHref, settings.name || "_blank", features);
+    if (!popupUrl) {
+      return;
+    }
+
+    ensurePopupStyles();
+    closePopup();
+
+    overlay = document.createElement("div");
+    overlay.className = "netclkr-popup-overlay";
+    overlay.id = "netclkr-popup-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+
+    dialog = document.createElement("div");
+    dialog.className = "netclkr-popup-dialog";
+    dialog.style.width = "min(100%, " + width + "px)";
+    dialog.style.height = "min(calc(100vh - 48px), " + height + "px)";
+
+    toolbar = document.createElement("div");
+    toolbar.className = "netclkr-popup-toolbar";
+
+    title = document.createElement("div");
+    title.className = "netclkr-popup-title";
+    title.textContent = settings.name || popupUrl;
+
+    closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "netclkr-popup-close";
+    closeButton.setAttribute("aria-label", "Закрыть pop-up");
+    closeButton.addEventListener("click", closePopup);
+
+    frame = document.createElement("iframe");
+    frame.className = "netclkr-popup-frame";
+    frame.src = popupUrl;
+    frame.loading = "lazy";
+    frame.referrerPolicy = "strict-origin-when-cross-origin";
+    frame.setAttribute("title", settings.name || "NetClkr popup");
+
+    toolbar.appendChild(title);
+    toolbar.appendChild(closeButton);
+    dialog.appendChild(toolbar);
+    dialog.appendChild(frame);
+    overlay.appendChild(dialog);
+
+    overlay.addEventListener("click", function (event) {
+      if (event.target === overlay) {
+        closePopup();
+      }
+    });
+
+    dialog.addEventListener("click", function (event) {
+      event.stopPropagation();
+    });
+
+    document.body.appendChild(overlay);
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", handlePopupKeydown);
+    closeButton.focus();
   }
 
   function sendLog(logUrl, payload) {
