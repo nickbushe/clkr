@@ -140,6 +140,115 @@
     return matchRule(link, rule).matched;
   }
 
+  function matchesCurrentPage(rule) {
+    var matchMode = typeof rule.matchMode === "string" ? rule.matchMode : "domain";
+    var currentHref = window.location.href;
+    var currentHostname = window.location.hostname;
+    var page = typeof rule.page === "string" ? rule.page : "";
+    var domain = typeof rule.domain === "string" ? rule.domain : "";
+
+    if (matchMode === "page") {
+      return page ? matchesPattern(currentHref, page) : false;
+    }
+
+    return domain ? matchesPattern(currentHostname, domain) : false;
+  }
+
+  function isCurrentTimeInSchedule(schedule) {
+    var nowDate;
+    var minutes;
+    var startMinutes;
+    var endMinutes;
+
+    if (!isObject(schedule) || !schedule.enabled) {
+      return true;
+    }
+
+    if (!schedule.start || !schedule.end) {
+      return true;
+    }
+
+    function parseTime(value) {
+      var parts = String(value || "").split(":");
+      var hours;
+      var mins;
+
+      if (parts.length !== 2) {
+        return null;
+      }
+
+      hours = Number(parts[0]);
+      mins = Number(parts[1]);
+
+      if (isNaN(hours) || isNaN(mins) || hours < 0 || hours > 23 || mins < 0 || mins > 59) {
+        return null;
+      }
+
+      return hours * 60 + mins;
+    }
+
+    startMinutes = parseTime(schedule.start);
+    endMinutes = parseTime(schedule.end);
+
+    if (startMinutes === null || endMinutes === null) {
+      return true;
+    }
+
+    nowDate = new Date();
+    minutes = nowDate.getHours() * 60 + nowDate.getMinutes();
+
+    if (startMinutes <= endMinutes) {
+      return minutes >= startMinutes && minutes <= endMinutes;
+    }
+
+    return minutes >= startMinutes || minutes <= endMinutes;
+  }
+
+  function findDomainRedirectRule(rules) {
+    var i;
+    var rule;
+
+    for (i = 0; i < rules.length; i += 1) {
+      rule = rules[i];
+
+      if (!isObject(rule) || rule.action !== "domainRedirect") {
+        continue;
+      }
+
+      if (!matchesCurrentPage(rule)) {
+        logInfo("[NetClkr] domain-rule:missed", {
+          ruleId: rule.id || "",
+          reason: "page_mismatch",
+          matchMode: rule.matchMode || "domain",
+          currentHref: window.location.href,
+          currentHostname: window.location.hostname
+        });
+        continue;
+      }
+
+      if (!isCurrentTimeInSchedule(rule.schedule)) {
+        logInfo("[NetClkr] domain-rule:missed", {
+          ruleId: rule.id || "",
+          reason: "schedule_mismatch",
+          schedule: rule.schedule || null
+        });
+        continue;
+      }
+
+      if (!rule.redirectTo) {
+        logInfo("[NetClkr] domain-rule:missed", {
+          ruleId: rule.id || "",
+          reason: "redirect_missing"
+        });
+        continue;
+      }
+
+      return rule;
+    }
+
+    return null;
+  }
+
   function findRuleForLink(link, rules) {
     var i;
     var matchResult;
@@ -367,6 +476,42 @@
     }
   }
 
+  function handleDomainRedirect(rule, payload) {
+    var targetUrl = typeof rule.redirectTo === "string" ? rule.redirectTo : "";
+
+    if (!targetUrl) {
+      return;
+    }
+
+    if (targetUrl === window.location.href) {
+      logInfo("[NetClkr] domain-rule:skipped", {
+        ruleId: rule.id || "",
+        reason: "target_equals_current_url",
+        targetUrl: targetUrl
+      });
+      return;
+    }
+
+    logInfo("[NetClkr] domain-rule:matched", {
+      instanceId: payload.instanceId,
+      ruleId: rule.id || "",
+      action: "domainRedirect",
+      targetUrl: targetUrl
+    });
+
+    sendLog(payload.logUrl, {
+      type: "domain_redirect",
+      instanceId: payload.instanceId,
+      ruleId: rule.id || "",
+      action: "domainRedirect",
+      href: window.location.href,
+      targetUrl: targetUrl,
+      ts: new Date().toISOString()
+    });
+
+    window.location.replace(targetUrl);
+  }
+
   window.NetClkrModule = {
     initialized: true,
     mount: function (payload) {
@@ -378,12 +523,18 @@
       }
 
       var rules = toArray(payload.rules).filter(isObject);
+      var domainRedirectRule = findDomainRedirectRule(rules);
 
       logInfo("[NetClkr] module:mounted", {
         instanceId: payload.instanceId,
         rulesCount: rules.length,
         interceptLinks: payload.interceptLinks !== false
       });
+
+      if (domainRedirectRule) {
+        handleDomainRedirect(domainRedirectRule, payload);
+        return;
+      }
 
       document.addEventListener(
         "click",
