@@ -19,6 +19,34 @@
     return Array.isArray(value) ? value : [];
   }
 
+  function resolveDelayMs(value) {
+    var timeout = typeof value === "string" && value.trim() ? Number(value) : value;
+
+    if (typeof timeout !== "number" || isNaN(timeout) || timeout <= 0) {
+      return 0;
+    }
+
+    return timeout;
+  }
+
+  function executeRedirect(url, mode, delayMs) {
+    var perform = function () {
+      if (mode === "assign") {
+        window.location.assign(url);
+        return;
+      }
+
+      window.location.replace(url);
+    };
+
+    if (delayMs > 0) {
+      window.setTimeout(perform, delayMs);
+      return;
+    }
+
+    perform();
+  }
+
   function matchRule(link, rule) {
     var linkMatch;
     if (Array.isArray(rule.links) && rule.links.length) {
@@ -443,6 +471,18 @@
     return link.href;
   }
 
+  function resolveRuleTimeout(rule) {
+    if (isObject(rule.__matchedLink) && rule.__matchedLink.timeout !== undefined) {
+      return resolveDelayMs(rule.__matchedLink.timeout);
+    }
+
+    if (rule.timeout !== undefined) {
+      return resolveDelayMs(rule.timeout);
+    }
+
+    return 0;
+  }
+
   function ensurePopupStyles() {
     if (document.getElementById("netclkr-popup-styles")) {
       return;
@@ -583,13 +623,15 @@
   function handleRuleAction(link, rule, payload, event) {
     var action = typeof rule.action === "string" ? rule.action : "redirect";
     var targetUrl = resolveTargetUrl(rule, link);
+    var delayMs = resolveRuleTimeout(rule);
 
     logInfo("[NetClkr] rule:matched", {
       instanceId: payload.instanceId,
       ruleId: rule.id || "",
       action: action,
       href: link.href,
-      targetUrl: targetUrl
+      targetUrl: targetUrl,
+      delayMs: delayMs
     });
 
     if (rule.preventDefault !== false) {
@@ -603,6 +645,7 @@
       action: action,
       href: link.href,
       targetUrl: targetUrl,
+      delayMs: delayMs,
       ts: new Date().toISOString()
     });
 
@@ -616,12 +659,12 @@
     }
 
     if (action === "redirect") {
-      window.location.assign(targetUrl);
+      executeRedirect(targetUrl, "assign", delayMs);
       return;
     }
 
     if (action === "replace") {
-      window.location.replace(targetUrl);
+      executeRedirect(targetUrl, "replace", delayMs);
     }
   }
 
@@ -629,6 +672,7 @@
     var targetUrl = resolveTargetUrl(rule, { href: window.location.href });
     var action = rule.action === "pageRedirect" ? "pageRedirect" : "domainRedirect";
     var logType = action === "pageRedirect" ? "page_redirect" : "domain_redirect";
+    var delayMs = resolveRuleTimeout(rule);
 
     if (!targetUrl) {
       return;
@@ -647,7 +691,8 @@
       instanceId: payload.instanceId,
       ruleId: rule.id || "",
       action: action,
-      targetUrl: targetUrl
+      targetUrl: targetUrl,
+      delayMs: delayMs
     });
 
     sendLog(payload.logUrl, {
@@ -657,10 +702,11 @@
       action: action,
       href: window.location.href,
       targetUrl: targetUrl,
+      delayMs: delayMs,
       ts: new Date().toISOString()
     });
 
-    window.location.replace(targetUrl);
+    executeRedirect(targetUrl, "replace", delayMs);
   }
 
   window.NetClkrModule = {
