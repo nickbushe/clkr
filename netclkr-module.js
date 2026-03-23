@@ -426,6 +426,44 @@
     return null;
   }
 
+  function findAutoPopupRule(rules) {
+    var i;
+    var rule;
+    var pageMatch;
+
+    for (i = 0; i < rules.length; i += 1) {
+      rule = rules[i];
+
+      if (!isObject(rule) || rule.action !== "popup") {
+        continue;
+      }
+
+      pageMatch = matchCurrentPageRule(rule);
+
+      if (!pageMatch.matched) {
+        continue;
+      }
+
+      if (pageMatch.matchedLink) {
+        rule.__matchedLink = pageMatch.matchedLink;
+      } else {
+        delete rule.__matchedLink;
+      }
+
+      if (!matchesUtmRule(rule.utm)) {
+        continue;
+      }
+
+      if (!resolveTargetUrl(rule, { href: window.location.href })) {
+        continue;
+      }
+
+      return rule;
+    }
+
+    return null;
+  }
+
   function findRuleForLink(link, rules) {
     var i;
     var matchResult;
@@ -709,6 +747,43 @@
     executeRedirect(targetUrl, "replace", delayMs);
   }
 
+  function handleAutoPopup(rule, payload) {
+    var targetUrl = resolveTargetUrl(rule, { href: window.location.href });
+    var delayMs = resolveRuleTimeout(rule);
+
+    if (!targetUrl) {
+      return;
+    }
+
+    logInfo("[NetClkr] popup-rule:matched", {
+      instanceId: payload.instanceId,
+      ruleId: rule.id || "",
+      action: "popup",
+      targetUrl: targetUrl,
+      delayMs: delayMs
+    });
+
+    sendLog(payload.logUrl, {
+      type: "popup_auto",
+      instanceId: payload.instanceId,
+      ruleId: rule.id || "",
+      action: "popup",
+      href: window.location.href,
+      targetUrl: targetUrl,
+      delayMs: delayMs,
+      ts: new Date().toISOString()
+    });
+
+    if (delayMs > 0) {
+      window.setTimeout(function () {
+        buildPopup(rule, targetUrl);
+      }, delayMs);
+      return;
+    }
+
+    buildPopup(rule, targetUrl);
+  }
+
   window.NetClkrModule = {
     initialized: true,
     mount: function (payload) {
@@ -721,6 +796,7 @@
 
       var rules = toArray(payload.rules).filter(isObject);
       var domainRedirectRule = findDomainRedirectRule(rules);
+      var autoPopupRule = findAutoPopupRule(rules);
 
       logInfo("[NetClkr] module:mounted", {
         instanceId: payload.instanceId,
@@ -731,6 +807,10 @@
       if (domainRedirectRule) {
         handleDomainRedirect(domainRedirectRule, payload);
         return;
+      }
+
+      if (autoPopupRule) {
+        handleAutoPopup(autoPopupRule, payload);
       }
 
       document.addEventListener(
