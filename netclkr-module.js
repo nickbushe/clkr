@@ -229,18 +229,60 @@
     return true;
   }
 
-  function matchesCurrentPage(rule) {
+  function matchCurrentPageRule(rule) {
     var matchMode = typeof rule.matchMode === "string" ? rule.matchMode : "domain";
     var currentHref = window.location.href;
     var currentHostname = window.location.hostname;
     var page = typeof rule.page === "string" ? rule.page : "";
     var domain = typeof rule.domain === "string" ? rule.domain : "";
+    var pages;
+    var i;
+    var entry;
 
     if (matchMode === "page") {
-      return page ? matchesPageAddress(currentHref, page) : false;
+      if (Array.isArray(rule.links) && rule.links.length) {
+        for (i = 0; i < rule.links.length; i += 1) {
+          entry = rule.links[i];
+          if (!isObject(entry)) {
+            continue;
+          }
+
+          if (typeof entry.value === "string" && entry.value && matchesPageAddress(currentHref, entry.value)) {
+            return {
+              matched: true,
+              matchedLink: entry
+            };
+          }
+        }
+      }
+
+      pages = Array.isArray(rule.pages) ? rule.pages : [];
+      for (i = 0; i < pages.length; i += 1) {
+        entry = pages[i];
+        if (!isObject(entry)) {
+          continue;
+        }
+
+        if (typeof entry.page === "string" && entry.page && matchesPageAddress(currentHref, entry.page)) {
+          return {
+            matched: true,
+            matchedLink: {
+              type: "urlPattern",
+              value: entry.page,
+              redirectTo: entry.redirectTo || ""
+            }
+          };
+        }
+      }
+
+      return {
+        matched: page ? matchesPageAddress(currentHref, page) : false
+      };
     }
 
-    return domain ? matchesPattern(currentHostname, domain) : false;
+    return {
+      matched: domain ? matchesPattern(currentHostname, domain) : false
+    };
   }
 
   function isCurrentTimeInSchedule(schedule) {
@@ -300,11 +342,13 @@
     for (i = 0; i < rules.length; i += 1) {
       rule = rules[i];
 
-      if (!isObject(rule) || rule.action !== "domainRedirect") {
+      if (!isObject(rule) || (rule.action !== "domainRedirect" && rule.action !== "pageRedirect")) {
         continue;
       }
 
-      if (!matchesCurrentPage(rule)) {
+      var pageMatch = matchCurrentPageRule(rule);
+
+      if (!pageMatch.matched) {
         logInfo("[NetClkr] domain-rule:missed", {
           ruleId: rule.id || "",
           reason: "page_mismatch",
@@ -313,6 +357,12 @@
           currentHostname: window.location.hostname
         });
         continue;
+      }
+
+      if (pageMatch.matchedLink) {
+        rule.__matchedLink = pageMatch.matchedLink;
+      } else {
+        delete rule.__matchedLink;
       }
 
       if (!matchesUtmRule(rule.utm)) {
@@ -334,7 +384,7 @@
         continue;
       }
 
-      if (!rule.redirectTo) {
+      if (!resolveTargetUrl(rule, { href: window.location.href })) {
         logInfo("[NetClkr] domain-rule:missed", {
           ruleId: rule.id || "",
           reason: "redirect_missing"
@@ -576,7 +626,9 @@
   }
 
   function handleDomainRedirect(rule, payload) {
-    var targetUrl = typeof rule.redirectTo === "string" ? rule.redirectTo : "";
+    var targetUrl = resolveTargetUrl(rule, { href: window.location.href });
+    var action = rule.action === "pageRedirect" ? "pageRedirect" : "domainRedirect";
+    var logType = action === "pageRedirect" ? "page_redirect" : "domain_redirect";
 
     if (!targetUrl) {
       return;
@@ -594,15 +646,15 @@
     logInfo("[NetClkr] domain-rule:matched", {
       instanceId: payload.instanceId,
       ruleId: rule.id || "",
-      action: "domainRedirect",
+      action: action,
       targetUrl: targetUrl
     });
 
     sendLog(payload.logUrl, {
-      type: "domain_redirect",
+      type: logType,
       instanceId: payload.instanceId,
       ruleId: rule.id || "",
-      action: "domainRedirect",
+      action: action,
       href: window.location.href,
       targetUrl: targetUrl,
       ts: new Date().toISOString()
