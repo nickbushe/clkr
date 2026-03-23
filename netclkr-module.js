@@ -136,8 +136,71 @@
     return value.indexOf(pattern) !== -1;
   }
 
+  function matchesPageAddress(value, pattern) {
+    if (!pattern) {
+      return false;
+    }
+
+    if (pattern === "*") {
+      return true;
+    }
+
+    if (pattern.indexOf("regex:") === 0) {
+      return matchesPattern(value, pattern);
+    }
+
+    if (pattern.indexOf("*") !== -1) {
+      return matchesPattern(value, pattern.replace(/\*/g, ""));
+    }
+
+    return value === pattern;
+  }
+
   function matchesRule(link, rule) {
     return matchRule(link, rule).matched;
+  }
+
+  function matchesUtmRule(utmRule) {
+    var searchParams;
+    var i;
+    var key;
+    var value;
+
+    if (!utmRule) {
+      return true;
+    }
+
+    searchParams = new URLSearchParams(window.location.search || "");
+
+    if (typeof utmRule === "string") {
+      return matchesPattern(window.location.search || "", utmRule);
+    }
+
+    if (Array.isArray(utmRule)) {
+      for (i = 0; i < utmRule.length; i += 1) {
+        if (matchesUtmRule(utmRule[i])) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    if (!isObject(utmRule)) {
+      return false;
+    }
+
+    for (key in utmRule) {
+      if (Object.prototype.hasOwnProperty.call(utmRule, key)) {
+        value = utmRule[key];
+
+        if (typeof value !== "string" || !matchesPattern(searchParams.get(key) || "", value)) {
+          return false;
+        }
+      }
+    }
+
+    return true;
   }
 
   function matchesCurrentPage(rule) {
@@ -148,7 +211,7 @@
     var domain = typeof rule.domain === "string" ? rule.domain : "";
 
     if (matchMode === "page") {
-      return page ? matchesPattern(currentHref, page) : false;
+      return page ? matchesPageAddress(currentHref, page) : false;
     }
 
     return domain ? matchesPattern(currentHostname, domain) : false;
@@ -222,6 +285,16 @@
           matchMode: rule.matchMode || "domain",
           currentHref: window.location.href,
           currentHostname: window.location.hostname
+        });
+        continue;
+      }
+
+      if (!matchesUtmRule(rule.utm)) {
+        logInfo("[NetClkr] domain-rule:missed", {
+          ruleId: rule.id || "",
+          reason: "utm_mismatch",
+          utm: rule.utm || null,
+          currentSearch: window.location.search || ""
         });
         continue;
       }
