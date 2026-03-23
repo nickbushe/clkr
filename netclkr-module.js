@@ -117,6 +117,12 @@
   }
 
   function matchesPattern(value, pattern) {
+    var normalizedValue;
+    var parts;
+    var searchIndex;
+    var i;
+    var partIndex;
+
     if (!pattern) {
       return false;
     }
@@ -131,6 +137,26 @@
       } catch (error) {
         return false;
       }
+    }
+
+    if (pattern.indexOf("*") !== -1) {
+      normalizedValue = String(value || "");
+      parts = pattern.split("*").filter(Boolean);
+
+      if (!parts.length) {
+        return true;
+      }
+
+      searchIndex = 0;
+      for (i = 0; i < parts.length; i += 1) {
+        partIndex = normalizedValue.indexOf(parts[i], searchIndex);
+        if (partIndex === -1) {
+          return false;
+        }
+        searchIndex = partIndex + parts[i].length;
+      }
+
+      return true;
     }
 
     return value.indexOf(pattern) !== -1;
@@ -150,7 +176,7 @@
     }
 
     if (pattern.indexOf("*") !== -1) {
-      return matchesPattern(value, pattern.replace(/\*/g, ""));
+      return matchesPattern(value, pattern);
     }
 
     return value === pattern;
