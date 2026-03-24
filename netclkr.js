@@ -574,8 +574,8 @@
           }, logger);
         });
       })
-      .catch(function (error) {
-        logger.error("[NetClkr] bootstrap:error", error && error.message ? error.message : error);
+      .catch(function () {
+        return null;
       });
   }
 
