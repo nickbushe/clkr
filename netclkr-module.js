@@ -730,6 +730,120 @@
     return 0;
   }
 
+  function findRuleForUrl(url, rules) {
+    var i;
+    var rule;
+    var matchResult;
+    var urlElement = { href: String(url || "") };
+
+    for (i = 0; i < rules.length; i += 1) {
+      rule = rules[i];
+
+      if (!isObject(rule) || (rule.action !== "redirect" && rule.action !== "replace")) {
+        continue;
+      }
+
+      if (!isCurrentTimeInSchedule(rule.schedule)) {
+        continue;
+      }
+
+      matchResult = matchRule(urlElement, rule);
+      if (!matchResult.matched) {
+        continue;
+      }
+
+      if (matchResult.matchedLink) {
+        rule.__matchedLink = matchResult.matchedLink;
+      } else {
+        delete rule.__matchedLink;
+      }
+
+      return rule;
+    }
+
+    return null;
+  }
+
+  function installNavigationInterceptors(payload, rules) {
+    var originalAssign;
+    var originalReplace;
+    var locationObject;
+
+    if (window.NetClkrModule.navigationInterceptorInstalled) {
+      return;
+    }
+
+    locationObject = window.location;
+    if (!locationObject || typeof locationObject.assign !== "function" || typeof locationObject.replace !== "function") {
+      return;
+    }
+
+    originalAssign = locationObject.assign.bind(locationObject);
+    originalReplace = locationObject.replace.bind(locationObject);
+
+    function handleNavigationAttempt(url, fallbackMethod) {
+      var nextUrl = String(url || "");
+      var matchedRule;
+      var targetUrl;
+      var delayMs;
+      var action;
+
+      if (!nextUrl || window.NetClkrModule.navigationBypassActive) {
+        fallbackMethod(nextUrl);
+        return;
+      }
+
+      matchedRule = findRuleForUrl(nextUrl, rules);
+      if (!matchedRule) {
+        fallbackMethod(nextUrl);
+        return;
+      }
+
+      targetUrl = resolveTargetUrl(matchedRule, { href: nextUrl });
+      delayMs = resolveRuleTimeout(matchedRule);
+      action = typeof matchedRule.action === "string" ? matchedRule.action : "redirect";
+
+      logInfo("[NetClkr] navigation-rule:matched", {
+        instanceId: payload.instanceId,
+        ruleId: matchedRule.id || "",
+        action: action,
+        href: nextUrl,
+        targetUrl: targetUrl,
+        delayMs: delayMs
+      });
+
+      sendLog(payload.logUrl, {
+        type: "navigation_redirect",
+        instanceId: payload.instanceId,
+        ruleId: matchedRule.id || "",
+        action: action,
+        href: nextUrl,
+        targetUrl: targetUrl,
+        delayMs: delayMs,
+        ts: new Date().toISOString()
+      });
+
+      window.NetClkrModule.navigationBypassActive = true;
+
+      if (action === "replace") {
+        executeRedirect(targetUrl, "replace", delayMs);
+        return;
+      }
+
+      executeRedirect(targetUrl, "assign", delayMs);
+    }
+
+    locationObject.assign = function (url) {
+      handleNavigationAttempt(url, originalAssign);
+    };
+
+    locationObject.replace = function (url) {
+      handleNavigationAttempt(url, originalReplace);
+    };
+
+    window.NetClkrModule.navigationInterceptorInstalled = true;
+  }
+
   function ensurePopupStyles() {
     if (document.getElementById("netclkr-popup-styles")) {
       return;
@@ -979,6 +1093,8 @@
 
   window.NetClkrModule = {
     initialized: true,
+    navigationBypassActive: false,
+    navigationInterceptorInstalled: false,
     mountedInstances: {},
     mount: function (payload) {
       if (!isObject(payload) || payload.interceptLinks === false) {
@@ -1019,6 +1135,8 @@
       if (pagePopupRule) {
         handlePagePopup(pagePopupRule, payload);
       }
+
+      installNavigationInterceptors(payload, rules);
 
       document.addEventListener(
         "click",
