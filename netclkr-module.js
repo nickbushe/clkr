@@ -70,10 +70,24 @@
 
   function resolveEventElement(target) {
     if (target instanceof Element) {
+      if (typeof target.closest === "function") {
+        var clickableAncestor = target.closest("a[href], area[href]");
+        if (clickableAncestor) {
+          return clickableAncestor;
+        }
+      }
+
       return target;
     }
 
     if (target && target.parentElement instanceof Element) {
+      if (typeof target.parentElement.closest === "function") {
+        var parentClickableAncestor = target.parentElement.closest("a[href], area[href]");
+        if (parentClickableAncestor) {
+          return parentClickableAncestor;
+        }
+      }
+
       return target.parentElement;
     }
 
