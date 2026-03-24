@@ -808,6 +808,7 @@
 
   window.NetClkrModule = {
     initialized: true,
+    mountedInstances: {},
     mount: function (payload) {
       if (!isObject(payload) || payload.interceptLinks === false) {
         logInfo("[NetClkr] module:mount-skipped", {
@@ -816,15 +817,28 @@
         return;
       }
 
+      var instanceId = typeof payload.instanceId === "string" ? payload.instanceId : "";
       var rules = toArray(payload.rules).filter(isObject);
       var domainRedirectRule = findDomainRedirectRule(rules);
       var pagePopupRule = findPagePopupRule(rules);
 
+      if (instanceId && this.mountedInstances[instanceId]) {
+        logInfo("[NetClkr] module:mount-skipped", {
+          reason: "instance_already_mounted",
+          instanceId: instanceId
+        });
+        return;
+      }
+
       logInfo("[NetClkr] module:mounted", {
-        instanceId: payload.instanceId,
+        instanceId: instanceId,
         rulesCount: rules.length,
         interceptLinks: payload.interceptLinks !== false
       });
+
+      if (instanceId) {
+        this.mountedInstances[instanceId] = true;
+      }
 
       if (domainRedirectRule) {
         handleDomainRedirect(domainRedirectRule, payload);
