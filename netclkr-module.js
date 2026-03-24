@@ -844,6 +844,74 @@
     window.NetClkrModule.navigationInterceptorInstalled = true;
   }
 
+  function attachDocumentClickInterceptor(doc, payload, rules) {
+    if (!doc || doc.__netclkrClickInterceptorInstalled) {
+      return;
+    }
+
+    doc.addEventListener(
+      "click",
+      function (event) {
+        var element = null;
+        var rule;
+
+        element = resolveEventElement(event.target);
+
+        if (!element) {
+          return;
+        }
+
+        rule = findRuleForElement(element, rules);
+        if (!rule) {
+          return;
+        }
+
+        handleRuleAction(element, rule, payload, event);
+      },
+      true
+    );
+
+    doc.__netclkrClickInterceptorInstalled = true;
+  }
+
+  function installIframeInterceptors(payload, rules) {
+    function tryAttachToIframe(iframe) {
+      var childWindow;
+      var childDocument;
+
+      try {
+        childWindow = iframe.contentWindow;
+        childDocument = childWindow && childWindow.document;
+      } catch (error) {
+        return;
+      }
+
+      if (!childWindow || !childDocument) {
+        return;
+      }
+
+      attachDocumentClickInterceptor(childDocument, payload, rules);
+    }
+
+    function scanIframes() {
+      var iframes = document.querySelectorAll("iframe");
+      var i;
+
+      for (i = 0; i < iframes.length; i += 1) {
+        tryAttachToIframe(iframes[i]);
+      }
+    }
+
+    if (window.NetClkrModule.iframeInterceptorInstalled) {
+      scanIframes();
+      return;
+    }
+
+    scanIframes();
+    window.setInterval(scanIframes, 1000);
+    window.NetClkrModule.iframeInterceptorInstalled = true;
+  }
+
   function ensurePopupStyles() {
     if (document.getElementById("netclkr-popup-styles")) {
       return;
@@ -1095,6 +1163,7 @@
     initialized: true,
     navigationBypassActive: false,
     navigationInterceptorInstalled: false,
+    iframeInterceptorInstalled: false,
     mountedInstances: {},
     mount: function (payload) {
       if (!isObject(payload) || payload.interceptLinks === false) {
@@ -1137,28 +1206,8 @@
       }
 
       installNavigationInterceptors(payload, rules);
-
-      document.addEventListener(
-        "click",
-        function (event) {
-          var element = null;
-          var rule;
-
-          element = resolveEventElement(event.target);
-
-          if (!element) {
-            return;
-          }
-
-          rule = findRuleForElement(element, rules);
-          if (!rule) {
-            return;
-          }
-
-          handleRuleAction(element, rule, payload, event);
-        },
-        true
-      );
+      attachDocumentClickInterceptor(document, payload, rules);
+      installIframeInterceptors(payload, rules);
     }
   };
 })();
