@@ -77,10 +77,23 @@
     var href = link.href || "";
     var text = (link.textContent || "").trim();
     var action = typeof rule.action === "string" ? rule.action : "redirect";
+    var pagePattern = typeof rule.pagePattern === "string" ? rule.pagePattern : "";
     var selector = typeof rule.selector === "string" ? rule.selector : "";
     var urlPattern = typeof rule.urlPattern === "string" ? rule.urlPattern : "";
     var textPattern = typeof rule.textPattern === "string" ? rule.textPattern : "";
+    var currentPageHref = window.location.href;
     var sourceUrlMatched = false;
+
+    if (pagePattern && !matchesPageAddress(currentPageHref, pagePattern)) {
+      return {
+        matched: false,
+        reason: "page_pattern_mismatch",
+        details: {
+          currentHref: currentPageHref,
+          pagePattern: pagePattern
+        }
+      };
+    }
 
     if (selector && !link.matches(selector)) {
       return { matched: false, reason: "selector_mismatch" };
@@ -140,6 +153,7 @@
 
       entryRule = {
         action: rule.action,
+        pagePattern: typeof entry.pagePattern === "string" && entry.pagePattern ? entry.pagePattern : (typeof rule.pagePattern === "string" ? rule.pagePattern : ""),
         selector: entry.type === "selector" ? entry.value : "",
         urlPattern: entry.type === "urlPattern" ? entry.value : "",
         textPattern: entry.type === "textPattern" ? entry.value : ""
