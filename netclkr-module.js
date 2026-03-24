@@ -580,6 +580,19 @@
     var matchResult;
 
     for (i = 0; i < rules.length; i += 1) {
+      if (!isCurrentTimeInSchedule(rules[i].schedule)) {
+        logInfo("[NetClkr] rule:missed", {
+          ruleId: rules[i].id || "",
+          action: rules[i].action || "",
+          href: getElementHref(element),
+          reason: "schedule_mismatch",
+          details: {
+            schedule: rules[i].schedule || null
+          }
+        });
+        continue;
+      }
+
       matchResult = matchRule(element, rules[i]);
 
       if (matchResult.matched) {

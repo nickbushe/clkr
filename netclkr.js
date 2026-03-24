@@ -11,6 +11,10 @@
   var DEFAULT_GEO_TIMEOUT_MS = 5000;
   var DEFAULT_GEO_TTL_MS = 30 * 60 * 1000;
   var DEFAULT_SUCCESS_CACHE_TTL_MS = 60 * 60 * 1000;
+  var DEFAULT_CONFIG_ON_TTL_MS = 60 * 60 * 1000;
+  var DEFAULT_CONFIG_OFF_TTL_MS = 24 * 60 * 60 * 1000;
+  var DEFAULT_CONFIG_PRECHECK_BLOCK_TTL_MS = 4 * 60 * 60 * 1000;
+  var DEFAULT_CONFIG_ERROR_TTL_MS = 5 * 60 * 1000;
 
   function now() {
     return Date.now();
@@ -287,6 +291,10 @@
     return "__netclkr_success_cache__:" + instanceId;
   }
 
+  function buildConfigCacheKey(instanceId) {
+    return "__netclkr_config_cache__:" + instanceId + ":" + window.location.hostname;
+  }
+
   function readSuccessCache(instanceId) {
     try {
       var raw = localStorage.getItem(buildSuccessCacheKey(instanceId));
@@ -321,10 +329,55 @@
         JSON.stringify({
           ts: now(),
           hostname: window.location.hostname,
+          configVersion: payload && payload.configVersion ? payload.configVersion : "",
           payload: payload,
           moduleSource: moduleSource
         })
       );
+    } catch (error) {}
+  }
+
+  function clearSuccessCache(instanceId) {
+    try {
+      localStorage.removeItem(buildSuccessCacheKey(instanceId));
+    } catch (error) {}
+  }
+
+  function readConfigCache(instanceId) {
+    try {
+      var raw = localStorage.getItem(buildConfigCacheKey(instanceId));
+      var cached = raw ? safeJsonParse(raw) : null;
+
+      if (!cached || typeof cached.expiresAt !== "number") {
+        return null;
+      }
+
+      if (cached.hostname && cached.hostname !== window.location.hostname) {
+        return null;
+      }
+
+      if (now() >= cached.expiresAt) {
+        return null;
+      }
+
+      return cached;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function writeConfigCache(instanceId, entry) {
+    try {
+      localStorage.setItem(
+        buildConfigCacheKey(instanceId),
+        JSON.stringify(entry)
+      );
+    } catch (error) {}
+  }
+
+  function clearConfigCache(instanceId) {
+    try {
+      localStorage.removeItem(buildConfigCacheKey(instanceId));
     } catch (error) {}
   }
 
@@ -501,32 +554,202 @@
       interceptLinks: responseConfig.interceptLinks !== false,
       rules: toArray(responseConfig.rules).filter(isObject),
       precheck: isObject(responseConfig.precheck) ? responseConfig.precheck : {},
-      geoApiUrl: typeof responseConfig.geoApiUrl === "string" ? responseConfig.geoApiUrl : ""
+      geoApiUrl: typeof responseConfig.geoApiUrl === "string" ? responseConfig.geoApiUrl : "",
+      configVersion: typeof responseConfig.configVersion === "string" ? responseConfig.configVersion : ""
     };
+  }
+
+  function buildConfigCacheEntry(instanceId, state, ttlMs, details) {
+    var entry = {
+      instanceId: instanceId,
+      state: state,
+      ttlMs: ttlMs,
+      fetchedAt: now(),
+      expiresAt: now() + ttlMs,
+      hostname: window.location.hostname
+    };
+    var key;
+
+    if (isObject(details)) {
+      for (key in details) {
+        if (Object.prototype.hasOwnProperty.call(details, key) && details[key] !== undefined) {
+          entry[key] = details[key];
+        }
+      }
+    }
+
+    return entry;
+  }
+
+  function cacheDisabledState(instanceId, reason) {
+    writeConfigCache(
+      instanceId,
+      buildConfigCacheEntry(instanceId, "off", DEFAULT_CONFIG_OFF_TTL_MS, {
+        reason: reason || "instance_disabled_or_missing"
+      })
+    );
+  }
+
+  function cacheBlockedState(instanceId, reason, configVersion) {
+    writeConfigCache(
+      instanceId,
+      buildConfigCacheEntry(instanceId, "blocked", DEFAULT_CONFIG_PRECHECK_BLOCK_TTL_MS, {
+        reason: reason || "blocked",
+        configVersion: configVersion || ""
+      })
+    );
+  }
+
+  function cacheErrorState(instanceId, reason) {
+    writeConfigCache(
+      instanceId,
+      buildConfigCacheEntry(instanceId, "error", DEFAULT_CONFIG_ERROR_TTL_MS, {
+        reason: reason || "request_failed"
+      })
+    );
+  }
+
+  function cacheSuccessState(instanceId, payload) {
+    writeConfigCache(
+      instanceId,
+      buildConfigCacheEntry(instanceId, "on", DEFAULT_CONFIG_ON_TTL_MS, {
+        configVersion: payload && payload.configVersion ? payload.configVersion : ""
+      })
+    );
+  }
+
+  function fetchRemoteConfig(runtimeConfig) {
+    return fetchJson(buildConfigRequestUrl(runtimeConfig.configUrl, runtimeConfig.instanceId), runtimeConfig.requestTimeoutMs)
+      .then(function (apiResponse) {
+        return normalizeApiConfig(apiResponse, runtimeConfig);
+      });
+  }
+
+  function buildModulePayload(runtimeConfig, remoteConfig) {
+    return {
+      instanceId: runtimeConfig.instanceId,
+      logUrl: remoteConfig.logUrl ? resolveUrl(remoteConfig.logUrl, runtimeConfig.configUrl) : "",
+      interceptLinks: remoteConfig.interceptLinks,
+      rules: remoteConfig.rules,
+      configVersion: remoteConfig.configVersion
+    };
+  }
+
+  function revalidateSuccessCache(runtimeConfig, logger, cachedSuccess) {
+    fetchRemoteConfig(runtimeConfig)
+      .then(function (remoteConfig) {
+        if (remoteConfig.status !== "on") {
+          clearSuccessCache(runtimeConfig.instanceId);
+          cacheDisabledState(runtimeConfig.instanceId, "instance_disabled_or_missing");
+          logger.info("[NetClkr] bootstrap:revalidate", {
+            instanceId: runtimeConfig.instanceId,
+            result: "disabled"
+          });
+          return null;
+        }
+
+        return runPrechecks(runtimeConfig.instanceId, remoteConfig, logger).then(function (precheckResult) {
+          if (!precheckResult.passed) {
+            clearSuccessCache(runtimeConfig.instanceId);
+            cacheBlockedState(runtimeConfig.instanceId, precheckResult.reason, remoteConfig.configVersion);
+            logger.info("[NetClkr] bootstrap:revalidate", {
+              instanceId: runtimeConfig.instanceId,
+              result: "blocked",
+              reason: precheckResult.reason
+            });
+            return null;
+          }
+
+          cacheSuccessState(runtimeConfig.instanceId, buildModulePayload(runtimeConfig, remoteConfig));
+
+          if (
+            cachedSuccess &&
+            cachedSuccess.configVersion &&
+            remoteConfig.configVersion &&
+            cachedSuccess.configVersion === remoteConfig.configVersion
+          ) {
+            logger.info("[NetClkr] bootstrap:revalidate", {
+              instanceId: runtimeConfig.instanceId,
+              result: "unchanged"
+            });
+            return null;
+          }
+
+          if (!remoteConfig.moduleUrl) {
+            clearSuccessCache(runtimeConfig.instanceId);
+            logger.warn("[NetClkr] bootstrap:revalidate", {
+              instanceId: runtimeConfig.instanceId,
+              result: "module_url_missing"
+            });
+            return null;
+          }
+
+          return fetch(resolveUrl(remoteConfig.moduleUrl, runtimeConfig.configUrl), {
+            method: "GET",
+            credentials: "omit",
+            cache: "no-store"
+          })
+            .then(function (response) {
+              if (!response.ok) {
+                throw new Error("NetClkrBootstrap: module request failed with " + response.status);
+              }
+              return response.text();
+            })
+            .then(function (source) {
+              writeSuccessCache(runtimeConfig.instanceId, buildModulePayload(runtimeConfig, remoteConfig), source);
+              logger.info("[NetClkr] bootstrap:revalidate", {
+                instanceId: runtimeConfig.instanceId,
+                result: "updated"
+              });
+            });
+        });
+      })
+      .catch(function () {
+        cacheErrorState(runtimeConfig.instanceId, "revalidate_failed");
+      });
   }
 
   function bootstrap() {
     var runtimeConfig = normalizeRuntimeConfig(getBootstrapConfig());
     var logger = createLogger(runtimeConfig);
     var cachedSuccess = readSuccessCache(runtimeConfig.instanceId);
+    var cachedConfig = readConfigCache(runtimeConfig.instanceId);
 
     logger.info("[NetClkr] bootstrap:start", {
       instanceId: runtimeConfig.instanceId,
       configUrl: runtimeConfig.configUrl
     });
 
-    if (cachedSuccess) {
+    if (cachedConfig && cachedConfig.state === "off") {
+      logger.info("[NetClkr] bootstrap:config-cache-hit", {
+        instanceId: runtimeConfig.instanceId,
+        state: "off",
+        reason: cachedConfig.reason || ""
+      });
+      return;
+    }
+
+    if (cachedConfig && cachedConfig.state === "blocked") {
+      logger.info("[NetClkr] bootstrap:config-cache-hit", {
+        instanceId: runtimeConfig.instanceId,
+        state: "blocked",
+        reason: cachedConfig.reason || ""
+      });
+      return;
+    }
+
+    if (cachedSuccess && (!cachedConfig || cachedConfig.state === "on")) {
       logger.info("[NetClkr] bootstrap:cache-hit", {
         instanceId: runtimeConfig.instanceId
       });
       executeModuleSource(cachedSuccess.moduleSource, cachedSuccess.payload, logger, "cache");
+      cacheSuccessState(runtimeConfig.instanceId, cachedSuccess.payload);
+      revalidateSuccessCache(runtimeConfig, logger, cachedSuccess);
       return;
     }
 
-    fetchJson(buildConfigRequestUrl(runtimeConfig.configUrl, runtimeConfig.instanceId), runtimeConfig.requestTimeoutMs)
-      .then(function (apiResponse) {
-        var remoteConfig = normalizeApiConfig(apiResponse, runtimeConfig);
-
+    fetchRemoteConfig(runtimeConfig)
+      .then(function (remoteConfig) {
         logger.info("[NetClkr] config:loaded", {
           instanceId: runtimeConfig.instanceId,
           status: remoteConfig.status,
@@ -534,6 +757,8 @@
         });
 
         if (remoteConfig.status !== "on") {
+          clearSuccessCache(runtimeConfig.instanceId);
+          cacheDisabledState(runtimeConfig.instanceId, "instance_disabled_or_missing");
           logger.warn("[NetClkr] bootstrap:stopped", {
             reason: "instance_disabled_or_missing",
             instanceId: runtimeConfig.instanceId
@@ -550,10 +775,14 @@
           });
 
           if (!precheckResult.passed) {
+            clearSuccessCache(runtimeConfig.instanceId);
+            cacheBlockedState(runtimeConfig.instanceId, precheckResult.reason, remoteConfig.configVersion);
             return null;
           }
 
           if (!remoteConfig.moduleUrl) {
+            clearSuccessCache(runtimeConfig.instanceId);
+            cacheErrorState(runtimeConfig.instanceId, "module_url_missing");
             logger.warn("[NetClkr] bootstrap:stopped", {
               reason: "module_url_missing",
               instanceId: runtimeConfig.instanceId
@@ -566,22 +795,25 @@
             instanceId: runtimeConfig.instanceId
           });
 
-          return loadModule(runtimeConfig.instanceId, resolveUrl(remoteConfig.moduleUrl, runtimeConfig.configUrl), {
-            instanceId: runtimeConfig.instanceId,
-            logUrl: remoteConfig.logUrl ? resolveUrl(remoteConfig.logUrl, runtimeConfig.configUrl) : "",
-            interceptLinks: remoteConfig.interceptLinks,
-            rules: remoteConfig.rules
-          }, logger);
+          return loadModule(
+            runtimeConfig.instanceId,
+            resolveUrl(remoteConfig.moduleUrl, runtimeConfig.configUrl),
+            buildModulePayload(runtimeConfig, remoteConfig),
+            logger
+          ).then(function () {
+            cacheSuccessState(runtimeConfig.instanceId, buildModulePayload(runtimeConfig, remoteConfig));
+          });
         });
       })
       .catch(function () {
+        cacheErrorState(runtimeConfig.instanceId, "config_request_failed");
         return null;
       });
   }
 
   window.NetClkrBootstrap = {
     initialized: true,
-    version: "3.1.0",
+    version: "3.2.0",
     defaultConfigUrl: DEFAULT_CONFIG_URL
   };
 
