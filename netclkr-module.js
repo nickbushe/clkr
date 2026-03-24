@@ -231,8 +231,11 @@
   }
 
   function matchesPattern(value, pattern) {
-    var normalizedValue;
+    var normalizedPattern;
+    var normalizedPatternLower;
+    var candidates;
     var parts;
+    var loweredParts;
     var searchIndex;
     var i;
     var partIndex;
@@ -241,39 +244,107 @@
       return false;
     }
 
-    if (pattern === "*") {
+    normalizedPattern = String(pattern || "").trim().replace(/^`+|`+$/g, "");
+
+    if (!normalizedPattern) {
+      return false;
+    }
+
+    normalizedPatternLower = normalizedPattern.toLowerCase();
+
+    if (normalizedPattern === "*") {
       return true;
     }
 
-    if (pattern.indexOf("regex:") === 0) {
+    if (normalizedPattern.indexOf("regex:") === 0) {
       try {
-        return new RegExp(pattern.slice(6)).test(value);
+        return new RegExp(normalizedPattern.slice(6)).test(value);
       } catch (error) {
         return false;
       }
     }
 
-    if (pattern.indexOf("*") !== -1) {
-      normalizedValue = String(value || "");
-      parts = pattern.split("*").filter(Boolean);
+    candidates = buildPatternCandidates(value);
+
+    if (normalizedPattern.indexOf("*") !== -1) {
+      parts = normalizedPattern
+        .split("*")
+        .map(function (part) {
+          return part.trim();
+        })
+        .filter(Boolean);
+      loweredParts = normalizedPatternLower
+        .split("*")
+        .map(function (part) {
+          return part.trim();
+        })
+        .filter(Boolean);
 
       if (!parts.length) {
         return true;
       }
 
-      searchIndex = 0;
-      for (i = 0; i < parts.length; i += 1) {
-        partIndex = normalizedValue.indexOf(parts[i], searchIndex);
-        if (partIndex === -1) {
-          return false;
+      for (i = 0; i < candidates.length; i += 1) {
+        searchIndex = 0;
+        for (partIndex = 0; partIndex < parts.length; partIndex += 1) {
+          var needle = candidates[i] === candidates[i].toLowerCase() ? loweredParts[partIndex] : parts[partIndex];
+          var foundAt = candidates[i].indexOf(needle, searchIndex);
+          if (foundAt === -1) {
+            searchIndex = -1;
+            break;
+          }
+          searchIndex = foundAt + needle.length;
         }
-        searchIndex = partIndex + parts[i].length;
+
+        if (searchIndex !== -1) {
+          return true;
+        }
       }
 
-      return true;
+      return false;
     }
 
-    return value.indexOf(pattern) !== -1;
+    for (i = 0; i < candidates.length; i += 1) {
+      if (candidates[i].indexOf(candidates[i] === candidates[i].toLowerCase() ? normalizedPatternLower : normalizedPattern) !== -1) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function buildPatternCandidates(value) {
+    var rawValue = String(value || "");
+    var candidates = [];
+    var seen = {};
+
+    function pushCandidate(candidate) {
+      var normalized = String(candidate || "");
+      if (!normalized || seen[normalized]) {
+        return;
+      }
+      seen[normalized] = true;
+      candidates.push(normalized);
+    }
+
+    function decodeSafely(candidate) {
+      try {
+        return decodeURIComponent(candidate);
+      } catch (error) {
+        return candidate;
+      }
+    }
+
+    pushCandidate(rawValue);
+    pushCandidate(rawValue.replace(/&amp;/gi, "&"));
+    pushCandidate(decodeSafely(rawValue));
+    pushCandidate(decodeSafely(rawValue.replace(/&amp;/gi, "&")));
+    pushCandidate(rawValue.toLowerCase());
+    pushCandidate(rawValue.replace(/&amp;/gi, "&").toLowerCase());
+    pushCandidate(decodeSafely(rawValue).toLowerCase());
+    pushCandidate(decodeSafely(rawValue.replace(/&amp;/gi, "&")).toLowerCase());
+
+    return candidates;
   }
 
   function matchesPageAddress(value, pattern) {
