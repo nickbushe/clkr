@@ -458,45 +458,6 @@
       });
   }
 
-  function matchesSitePattern(hostname, pattern) {
-    if (!pattern || typeof pattern !== "string") {
-      return false;
-    }
-
-    if (pattern.indexOf("regex:") === 0) {
-      try {
-        return new RegExp(pattern.slice(6)).test(hostname);
-      } catch (error) {
-        return false;
-      }
-    }
-
-    if (pattern.indexOf("*.") === 0) {
-      var rootDomain = pattern.slice(2);
-      return hostname === rootDomain || hostname.slice(-(rootDomain.length + 1)) === "." + rootDomain;
-    }
-
-    return hostname === pattern;
-  }
-
-  function isAllowedSite(instanceConfig) {
-    var sites = toArray(instanceConfig.sites);
-    var hostname = window.location.hostname;
-    var i;
-
-    if (!sites.length) {
-      return true;
-    }
-
-    for (i = 0; i < sites.length; i += 1) {
-      if (matchesSitePattern(hostname, sites[i])) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   function executeModuleSource(source, payload, logger, moduleUrl) {
     var factory = new Function("window", "document", "payload", source);
     factory(window, document, payload);
@@ -538,7 +499,6 @@
       moduleUrl: typeof responseConfig.moduleUrl === "string" ? responseConfig.moduleUrl : "",
       logUrl: typeof responseConfig.logUrl === "string" ? responseConfig.logUrl : "",
       interceptLinks: responseConfig.interceptLinks !== false,
-      sites: toArray(responseConfig.sites),
       rules: toArray(responseConfig.rules).filter(isObject),
       precheck: isObject(responseConfig.precheck) ? responseConfig.precheck : {},
       geoApiUrl: typeof responseConfig.geoApiUrl === "string" ? responseConfig.geoApiUrl : ""
@@ -577,14 +537,6 @@
           logger.warn("[NetClkr] bootstrap:stopped", {
             reason: "instance_disabled_or_missing",
             instanceId: runtimeConfig.instanceId
-          });
-          return null;
-        }
-
-        if (!isAllowedSite(remoteConfig)) {
-          logger.warn("[NetClkr] bootstrap:stopped", {
-            reason: "site_not_allowed",
-            hostname: window.location.hostname
           });
           return null;
         }
