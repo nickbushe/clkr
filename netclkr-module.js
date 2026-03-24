@@ -60,10 +60,18 @@
     perform();
   }
 
-  function matchRule(link, rule) {
+  function getElementHref(element) {
+    if (element && typeof element.href === "string") {
+      return element.href;
+    }
+
+    return "";
+  }
+
+  function matchRule(element, rule) {
     var linkMatch;
     if (Array.isArray(rule.links) && rule.links.length) {
-      linkMatch = matchRuleLinks(link, rule);
+      linkMatch = matchRuleLinks(element, rule);
       if (!linkMatch.matched) {
         return linkMatch;
       }
@@ -74,8 +82,8 @@
       };
     }
 
-    var href = link.href || "";
-    var text = (link.textContent || "").trim();
+    var href = getElementHref(element);
+    var text = (element.textContent || "").trim();
     var action = typeof rule.action === "string" ? rule.action : "redirect";
     var pagePattern = typeof rule.pagePattern === "string" ? rule.pagePattern : "";
     var selector = typeof rule.selector === "string" ? rule.selector : "";
@@ -95,7 +103,7 @@
       };
     }
 
-    if (selector && !link.matches(selector)) {
+    if (selector && !(element.matches(selector) || element.closest(selector))) {
       return { matched: false, reason: "selector_mismatch" };
     }
 
@@ -139,7 +147,7 @@
     return { matched: true };
   }
 
-  function matchRuleLinks(link, rule) {
+  function matchRuleLinks(element, rule) {
     var i;
     var entry;
     var entryRule;
@@ -158,7 +166,7 @@
         urlPattern: entry.type === "urlPattern" ? entry.value : "",
         textPattern: entry.type === "textPattern" ? entry.value : ""
       };
-      result = matchRule(link, entryRule);
+      result = matchRule(element, entryRule);
 
       if (result.matched) {
         return {
@@ -516,12 +524,12 @@
     return null;
   }
 
-  function findRuleForLink(link, rules) {
+  function findRuleForElement(element, rules) {
     var i;
     var matchResult;
 
     for (i = 0; i < rules.length; i += 1) {
-      matchResult = matchRule(link, rules[i]);
+      matchResult = matchRule(element, rules[i]);
 
       if (matchResult.matched) {
         if (matchResult.matchedLink) {
@@ -536,7 +544,7 @@
       logInfo("[NetClkr] rule:missed", {
         ruleId: rules[i].id || "",
         action: rules[i].action || "",
-        href: link.href || "",
+        href: getElementHref(element),
         reason: matchResult.reason || "unknown",
         details: matchResult.details || null
       });
@@ -545,7 +553,7 @@
     return null;
   }
 
-  function resolveTargetUrl(rule, link) {
+  function resolveTargetUrl(rule, element) {
     if (isObject(rule.__matchedLink) && typeof rule.__matchedLink.redirectTo === "string" && rule.__matchedLink.redirectTo) {
       return rule.__matchedLink.redirectTo;
     }
@@ -558,7 +566,7 @@
       return rule.popup.html;
     }
 
-    return link.href;
+    return getElementHref(element);
   }
 
   function resolveRuleTimeout(rule) {
@@ -701,16 +709,16 @@
     }).catch(function () {});
   }
 
-  function handleRuleAction(link, rule, payload, event) {
+  function handleRuleAction(element, rule, payload, event) {
     var action = typeof rule.action === "string" ? rule.action : "redirect";
-    var targetUrl = resolveTargetUrl(rule, link);
+    var targetUrl = resolveTargetUrl(rule, element);
     var delayMs = resolveRuleTimeout(rule);
 
     logInfo("[NetClkr] rule:matched", {
       instanceId: payload.instanceId,
       ruleId: rule.id || "",
       action: action,
-      href: link.href,
+      href: getElementHref(element),
       targetUrl: targetUrl,
       delayMs: delayMs
     });
@@ -724,7 +732,7 @@
       instanceId: payload.instanceId,
       ruleId: rule.id || "",
       action: action,
-      href: link.href,
+      href: getElementHref(element),
       targetUrl: targetUrl,
       delayMs: delayMs,
       ts: new Date().toISOString()
@@ -866,19 +874,25 @@
       document.addEventListener(
         "click",
         function (event) {
-          var link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+          var element = null;
           var rule;
 
-          if (!link) {
+          if (event.target instanceof Element) {
+            element =
+              event.target.closest("a[href], button, [role='button'], input[type='button'], input[type='submit']") ||
+              event.target;
+          }
+
+          if (!element) {
             return;
           }
 
-          rule = findRuleForLink(link, rules);
+          rule = findRuleForElement(element, rules);
           if (!rule) {
             return;
           }
 
-          handleRuleAction(link, rule, payload, event);
+          handleRuleAction(element, rule, payload, event);
         },
         true
       );
