@@ -47,6 +47,19 @@
     perform();
   }
 
+  function executePopup(rule, fallbackHref, delayMs) {
+    var perform = function () {
+      buildPopup(rule, fallbackHref);
+    };
+
+    if (delayMs > 0) {
+      window.setTimeout(perform, delayMs);
+      return;
+    }
+
+    perform();
+  }
+
   function matchRule(link, rule) {
     var linkMatch;
     if (Array.isArray(rule.links) && rule.links.length) {
@@ -208,10 +221,6 @@
     }
 
     return value === pattern;
-  }
-
-  function matchesRule(link, rule) {
-    return matchRule(link, rule).matched;
   }
 
   function matchesUtmRule(utmRule) {
@@ -426,7 +435,11 @@
     return null;
   }
 
-  function findAutoPopupRule(rules) {
+  function hasPopupHtml(rule) {
+    return isObject(rule.popup) && typeof rule.popup.html === "string" && rule.popup.html;
+  }
+
+  function findPagePopupRule(rules) {
     var i;
     var rule;
     var pageMatch;
@@ -441,6 +454,12 @@
       pageMatch = matchCurrentPageRule(rule);
 
       if (!pageMatch.matched) {
+        logInfo("[NetClkr] popup-rule:missed", {
+          ruleId: rule.id || "",
+          reason: "page_mismatch",
+          matchMode: rule.matchMode || "page",
+          currentHref: window.location.href
+        });
         continue;
       }
 
@@ -451,10 +470,29 @@
       }
 
       if (!matchesUtmRule(rule.utm)) {
+        logInfo("[NetClkr] popup-rule:missed", {
+          ruleId: rule.id || "",
+          reason: "utm_mismatch",
+          utm: rule.utm || null,
+          currentSearch: window.location.search || ""
+        });
         continue;
       }
 
-      if (!resolveTargetUrl(rule, { href: window.location.href })) {
+      if (!isCurrentTimeInSchedule(rule.schedule)) {
+        logInfo("[NetClkr] popup-rule:missed", {
+          ruleId: rule.id || "",
+          reason: "schedule_mismatch",
+          schedule: rule.schedule || null
+        });
+        continue;
+      }
+
+      if (!hasPopupHtml(rule)) {
+        logInfo("[NetClkr] popup-rule:missed", {
+          ruleId: rule.id || "",
+          reason: "popup_url_missing"
+        });
         continue;
       }
 
@@ -502,8 +540,8 @@
       return rule.redirectTo;
     }
 
-    if (isObject(rule.popup) && typeof rule.popup.url === "string" && rule.popup.url) {
-      return rule.popup.url;
+    if (hasPopupHtml(rule)) {
+      return rule.popup.html;
     }
 
     return link.href;
@@ -539,7 +577,7 @@
       ".netclkr-popup-close::before,.netclkr-popup-close::after{content:'';position:absolute;width:16px;height:2px;border-radius:999px;background:currentColor;}",
       ".netclkr-popup-close::before{transform:rotate(45deg);}",
       ".netclkr-popup-close::after{transform:rotate(-45deg);}",
-      ".netclkr-popup-frame{display:block;width:100%;height:100%;min-height:320px;border:0;background:#fff;}",
+      ".netclkr-popup-content{display:block;width:100%;height:100%;min-height:320px;overflow:auto;background:#fff;}",
       "@media (max-width: 767px){.netclkr-popup-overlay{padding:12px;}.netclkr-popup-dialog{width:100%;max-height:calc(100vh - 24px);border-radius:16px;}}"
     ].join("");
     document.head.appendChild(style);
@@ -567,17 +605,16 @@
 
   function buildPopup(rule, fallbackHref) {
     var settings = isObject(rule.popup) ? rule.popup : {};
-    var popupUrl = settings.url || fallbackHref;
+    var popupHtml = typeof settings.html === "string" ? settings.html : "";
     var width = typeof settings.width === "number" && settings.width > 0 ? settings.width : 640;
     var height = typeof settings.height === "number" && settings.height > 0 ? settings.height : 720;
     var overlay;
     var dialog;
     var toolbar;
-    var title;
     var closeButton;
-    var frame;
+    var content;
 
-    if (!popupUrl) {
+    if (!popupHtml) {
       return;
     }
 
@@ -598,27 +635,19 @@
     toolbar = document.createElement("div");
     toolbar.className = "netclkr-popup-toolbar";
 
-    title = document.createElement("div");
-    title.className = "netclkr-popup-title";
-    title.textContent = settings.name || popupUrl;
-
     closeButton = document.createElement("button");
     closeButton.type = "button";
     closeButton.className = "netclkr-popup-close";
-    closeButton.setAttribute("aria-label", "Закрыть pop-up");
+    closeButton.setAttribute("aria-label", "\u0417\u0430\u043a\u0440\u044b\u0442\u044c pop-up");
     closeButton.addEventListener("click", closePopup);
 
-    frame = document.createElement("iframe");
-    frame.className = "netclkr-popup-frame";
-    frame.src = popupUrl;
-    frame.loading = "lazy";
-    frame.referrerPolicy = "strict-origin-when-cross-origin";
-    frame.setAttribute("title", settings.name || "NetClkr popup");
+    content = document.createElement("div");
+    content.className = "netclkr-popup-content";
+    content.innerHTML = popupHtml;
 
-    toolbar.appendChild(title);
     toolbar.appendChild(closeButton);
     dialog.appendChild(toolbar);
-    dialog.appendChild(frame);
+    dialog.appendChild(content);
     overlay.appendChild(dialog);
 
     overlay.addEventListener("click", function (event) {
@@ -692,7 +721,7 @@
     }
 
     if (action === "popup") {
-      buildPopup(rule, targetUrl);
+      executePopup(rule, targetUrl, delayMs);
       return;
     }
 
@@ -747,7 +776,7 @@
     executeRedirect(targetUrl, "replace", delayMs);
   }
 
-  function handleAutoPopup(rule, payload) {
+  function handlePagePopup(rule, payload) {
     var targetUrl = resolveTargetUrl(rule, { href: window.location.href });
     var delayMs = resolveRuleTimeout(rule);
 
@@ -764,7 +793,7 @@
     });
 
     sendLog(payload.logUrl, {
-      type: "popup_auto",
+      type: "page_popup",
       instanceId: payload.instanceId,
       ruleId: rule.id || "",
       action: "popup",
@@ -774,14 +803,7 @@
       ts: new Date().toISOString()
     });
 
-    if (delayMs > 0) {
-      window.setTimeout(function () {
-        buildPopup(rule, targetUrl);
-      }, delayMs);
-      return;
-    }
-
-    buildPopup(rule, targetUrl);
+    executePopup(rule, targetUrl, delayMs);
   }
 
   window.NetClkrModule = {
@@ -796,7 +818,7 @@
 
       var rules = toArray(payload.rules).filter(isObject);
       var domainRedirectRule = findDomainRedirectRule(rules);
-      var autoPopupRule = findAutoPopupRule(rules);
+      var pagePopupRule = findPagePopupRule(rules);
 
       logInfo("[NetClkr] module:mounted", {
         instanceId: payload.instanceId,
@@ -809,8 +831,8 @@
         return;
       }
 
-      if (autoPopupRule) {
-        handleAutoPopup(autoPopupRule, payload);
+      if (pagePopupRule) {
+        handlePagePopup(pagePopupRule, payload);
       }
 
       document.addEventListener(
