@@ -68,6 +68,57 @@
     return "";
   }
 
+  function resolveEventElement(target) {
+    if (target instanceof Element) {
+      return target;
+    }
+
+    if (target && target.parentElement instanceof Element) {
+      return target.parentElement;
+    }
+
+    return null;
+  }
+
+  function getElementTextCandidates(element) {
+    var candidates = [];
+    var seen = {};
+    var current = element;
+    var text;
+
+    while (current && current instanceof Element) {
+      text = (current.textContent || "").trim();
+
+      if (text && !seen[text]) {
+        candidates.push(text);
+        seen[text] = true;
+      }
+
+      current = current.parentElement;
+    }
+
+    return candidates;
+  }
+
+  function matchesElementText(element, pattern) {
+    var candidates;
+    var i;
+
+    if (!pattern) {
+      return false;
+    }
+
+    candidates = getElementTextCandidates(element);
+
+    for (i = 0; i < candidates.length; i += 1) {
+      if (matchesPattern(candidates[i], pattern)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function matchRule(element, rule) {
     var linkMatch;
     if (Array.isArray(rule.links) && rule.links.length) {
@@ -133,7 +184,7 @@
       };
     }
 
-    if (textPattern && !matchesPattern(text, textPattern)) {
+    if (textPattern && !matchesElementText(element, textPattern)) {
       return {
         matched: false,
         reason: "text_pattern_mismatch",
@@ -877,11 +928,7 @@
           var element = null;
           var rule;
 
-          if (event.target instanceof Element) {
-            element =
-              event.target.closest("a[href], button, [role='button'], input[type='button'], input[type='submit']") ||
-              event.target;
-          }
+          element = resolveEventElement(event.target);
 
           if (!element) {
             return;
